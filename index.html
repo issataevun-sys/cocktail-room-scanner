@@ -50,10 +50,11 @@ const formats=['EAN_13','EAN_8','UPC_A','UPC_E','CODE_128','CODE_39','ITF'];
 function status(message){$('status').textContent=message}
 function ui(){ $('start').disabled=running||starting;$('stop').disabled=!running&&!starting;$('guide').hidden=!running;$('placeholder').hidden=running||starting }
 const parentToken=new URLSearchParams(location.search).get('cr_token')||'';
+let crScanSequence=0;
 function sendToCocktailRoom(value,format){
  if(!parentToken||!window.opener)return false;
  try{
-  window.opener.postMessage({type:'cr:barcode-scanned',version:1,token:parentToken,barcode:value,format:String(format||'')},'*');
+  window.opener.postMessage({type:'cr:barcode-scanned',version:1,token:parentToken,sequence:++crScanSequence,barcode:value,format:String(format||'')},'*');
   return true;
  }catch(_e){return false}
 }
@@ -125,7 +126,7 @@ $('start').onclick=start;
 $('stop').onclick=()=>{status('Камера выключена.');stop()};
 $('again').onclick=async()=>{await busyStop;$('result').hidden=true;last='';start()};
 $('copy').onclick=()=>copy($('value').textContent);
-$('return').onclick=()=>{sendToCocktailRoom($('value').textContent,$('format').textContent.replace(/^Формат: /,''));window.close()};
+$('return').onclick=()=>window.close();
 $('torch').onclick=async()=>{
  if(!scanner)return;
  try{const capability=scanner.getRunningTrackCameraCapabilities?.().torchFeature?.();if(!capability?.isSupported?.())throw Error('Недоступен');
