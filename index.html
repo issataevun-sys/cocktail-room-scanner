@@ -1,1 +1,125 @@
-<!doctype html><html lang="ru"><meta charset="utf-8"><title>Barcode Scanner</title><body>Scanner setup</body></html>
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#151619"><title>Cocktail Room — Сканер штрихкодов</title>
+<style>
+:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#101114;color:#f7f8fa}
+*{box-sizing:border-box}body{margin:0;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+main{max-width:680px;margin:auto;padding:20px 16px 35px}
+.header{display:flex;align-items:center;gap:12px;margin-bottom:14px}.mark{height:44px;width:44px;border-radius:14px;background:#303137;display:grid;place-items:center;font-size:24px}
+h1{font-size:23px;line-height:1.2;margin:0}h2{font-size:17px;margin:0 0 10px}
+.muted{color:#a3a6b0;font-size:13px;line-height:1.5}.card{background:#1d1f24;border-radius:20px;padding:16px;margin-top:16px}
+.view{position:relative;min-height:260px;background:#08090a;border-radius:16px;overflow:hidden;display:flex;justify-content:center;align-items:center}
+#reader{width:100%;min-height:260px}#reader video{object-fit:cover!important;max-height:430px!important;width:100%!important}
+#reader img[alt="Info icon"]{display:none}#reader__dashboard{display:none}
+.scan-guide{pointer-events:none;position:absolute;left:8%;right:8%;top:50%;height:118px;transform:translateY(-50%);border:2px solid #ecdc92;border-radius:13px;box-shadow:0 0 0 100vmax #0003;z-index:2}
+.scan-guide::after{content:"";position:absolute;left:10%;right:10%;top:50%;border-top:1px solid #efda83}
+.placeholder{position:absolute;inset:0;display:grid;place-items:center;text-align:center;color:#b1b2ba;z-index:1;pointer-events:none;padding:24px}
+.row{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+button{font:inherit;font-size:15px;font-weight:600;border:0;min-height:46px;border-radius:13px;padding:10px 17px;cursor:pointer}
+.primary{background:#f4f5f7;color:#16171a;flex:1}.secondary{background:#3b3e45;color:#f5f5f7}
+button:disabled{opacity:.5;cursor:default}
+#result{margin-top:16px;padding:17px;background:#293b31;border-radius:16px;overflow-wrap:anywhere}
+#result .value{font-size:27px;letter-spacing:.5px;font-variant-numeric:tabular-nums;line-height:1.3;word-break:break-all;margin:8px 0}
+#result .label{font-size:12px;color:#aacfb0}#status{min-height:26px;margin-top:14px;font-size:14px}
+#history{list-style:none;padding:0;margin:0}#history li{padding:12px 0;border-bottom:1px solid #34363a;display:flex;justify-content:space-between;gap:8px;align-items:center}
+#history code{font-size:14px;overflow-wrap:anywhere}#history button{min-height:32px;padding:5px 10px;font-size:12px}
+[hidden]{display:none!important}
+</style></head><body>
+<main>
+<div class="header"><div class="mark">▥</div><div><h1>Сканер штрихкодов</h1><div class="muted">Cocktail Room · тест камеры</div></div></div>
+<div class="card">
+<h2>Наведите камеру на штрихкод пачки</h2>
+<div class="view"><div id="reader"></div><div class="placeholder" id="placeholder">Камера выключена</div><div class="scan-guide" id="guide" hidden></div></div>
+<div class="row"><button type="button" class="primary" id="start">Включить камеру</button><button type="button" class="secondary" id="stop" disabled>Выключить</button><button type="button" class="secondary" id="torch" hidden>Фонарик</button></div>
+<div id="status" role="status" aria-live="polite" class="muted">Готов к сканированию. Разрешите доступ к камере при первом запуске.</div>
+<div id="result" hidden><div class="label">Штрихкод считан</div><div id="value" class="value"></div><div id="format" class="muted"></div><div class="row"><button type="button" id="copy" class="primary">Скопировать</button><button type="button" id="again" class="secondary">Сканировать следующий</button></div></div>
+</div>
+<div class="card"><h2>Результаты текущего сеанса</h2><p class="muted" id="empty">Пока ничего не отсканировано.</p><ul id="history"></ul></div>
+<p class="muted">Штрихкоды EAN-13, EAN-8, UPC, Code 128, Code 39, ITF. Распознавание выполняется на телефоне; данные не отправляются в Cocktail Room, iiko или другие системы. При первой загрузке нужен интернет для библиотеки. Страница должна быть открыта по HTTPS, отдельно от Google Apps Script.</p>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let scanner=null,running=false,starting=false,session=0,torchOn=false,last='',lastAt=0,values=[],busyStop=Promise.resolve();
+const formats=['EAN_13','EAN_8','UPC_A','UPC_E','CODE_128','CODE_39','ITF'];
+function status(message){$('status').textContent=message}
+function ui(){ $('start').disabled=running||starting;$('stop').disabled=!running&&!starting;$('guide').hidden=!running;$('placeholder').hidden=running||starting }
+function showResult(value,format){
+ if(!running)return;
+ const at=Date.now();
+ if(value===last&&at-lastAt<1800)return;
+ last=value;lastAt=at;
+ $('value').textContent=value;$('format').textContent='Формат: '+(format||'штрихкод');
+ $('result').hidden=false;$('empty').hidden=true;
+ if(!values.includes(value))values.unshift(value);
+ values=values.slice(0,30);
+ $('history').replaceChildren(...values.map(v=>{
+  const li=document.createElement('li'),code=document.createElement('code'),button=document.createElement('button');
+  code.textContent=v;button.textContent='Копировать';button.className='secondary';
+  button.onclick=()=>copy(v);li.append(code,button);return li;
+ }));
+ if(navigator.vibrate)navigator.vibrate(75);
+ status('Успешно. Код распознан.');
+ busyStop=stop();
+}
+async function start(){
+ if(starting||running)return;
+ await busyStop;
+ if(starting||running)return;
+ const token=++session;starting=true;ui();
+ if(!window.isSecureContext){status('Для камеры нужен HTTPS-адрес.');starting=false;ui();return}
+ if(!navigator.mediaDevices?.getUserMedia){status('Доступ к камере в этом браузере отсутствует.');starting=false;ui();return}
+ if(!window.Html5Qrcode){status('Библиотека сканирования не загрузилась. Проверьте интернет.');starting=false;ui();return}
+ let candidate=null;
+ try{
+  status('Запрашиваем доступ к задней камере…');
+  const supported=formats.map(f=>window.Html5QrcodeSupportedFormats[f]).filter(f=>f!==undefined);
+  candidate=new Html5Qrcode('reader',{formatsToSupport:supported,verbose:false});
+  scanner=candidate;
+  await candidate.start({facingMode:'environment'},{
+   fps:12,videoConstraints:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}},
+   qrbox:(w,h)=>({width:Math.max(100,Math.round(w*.85)),height:Math.max(60,Math.min(Math.round(h*.32),120))})
+  },(raw,detail)=>{
+   if(token!==session||!running)return;
+   showResult(String(raw),detail?.result?.format?.formatName||'EAN / Code');
+  },()=>{});
+  if(token!==session){try{await candidate.stop()}catch(_e){};try{candidate.clear()}catch(_e){};return}
+  running=true;torchOn=false;$('torch').hidden=true;
+  try{
+   const track=candidate.getRunningTrackCameraCapabilities?.();
+   if(track?.torchFeature?.().isSupported?.())$('torch').hidden=false;
+  }catch(_e){}
+  status('Наведите штрихкод на рамку. Держите телефон на расстоянии 10–20 см.');
+ }catch(e){
+  if(token===session)status('Камера не запущена: '+String(e?.message||e)+'. Откройте эту страницу отдельно по HTTPS и разрешите камеру.');
+  if(candidate){try{await candidate.stop()}catch(_e){};try{candidate.clear()}catch(_e){}}
+  if(scanner===candidate)scanner=null;
+ }finally{if(token===session){starting=false;ui()}}
+}
+async function stop(){
+ session++;
+ const current=scanner;scanner=null;starting=false;running=false;
+ $('torch').hidden=true;ui();
+ if(!current)return;
+ try{await current.stop()}catch(_e){}
+ try{current.clear()}catch(_e){}
+}
+async function copy(value){
+ try{await navigator.clipboard.writeText(value);status('Скопировано: '+value)}
+ catch(_e){status('Не удалось скопировать. Выделите код вручную.')}
+}
+$('start').onclick=start;
+$('stop').onclick=()=>{status('Камера выключена.');stop()};
+$('again').onclick=async()=>{await busyStop;$('result').hidden=true;last='';start()};
+$('copy').onclick=()=>copy($('value').textContent);
+$('torch').onclick=async()=>{
+ if(!scanner)return;
+ try{const capability=scanner.getRunningTrackCameraCapabilities?.().torchFeature?.();if(!capability?.isSupported?.())throw Error('Недоступен');
+  torchOn=!torchOn;await capability.apply(torchOn);$('torch').textContent=torchOn?'Выключить свет':'Фонарик';
+ }catch(_e){status('Фонарик недоступен на этом устройстве.')}
+};
+window.addEventListener('pagehide',()=>{stop()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&running)stop()});
+ui();
+</script></body></html>
